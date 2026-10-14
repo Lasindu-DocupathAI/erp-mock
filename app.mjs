@@ -15,6 +15,15 @@
  *   GET  /customers/many-pages   10 records per page, 5000 records -> blows the 20-page cap
  *   GET  /prices                 a second catalogue, for a two-connection document test
  *   POST /customers/search       POST-for-query, body echoed into the filter
+ *   GET  /customers/link-header  bare array, next page only in the Link header ?page=&per_page=
+ *   GET  /customers/next-url     next page as an absolute URL in $.links.next, null at the end
+ *   GET  /customers/odata        OData v4: $.value, $top/$skip, @odata.nextLink absent at the end
+ *   GET  /customers/has-more     Stripe style ?starting_after=<customer_code>&limit=, has_more, no total
+ *   GET  /customers/top-level-array  no envelope, the root is the array
+ *   GET  /customers/updated-since    incremental ?updated_since=<ISO 8601>, 400 on a bad date
+ *   GET  /customers/unicode      16 names that break encoding, CSV quoting and trimming
+ *   GET  /customers/mixed-types  one field, many types: strings, numbers, null, missing, objects
+ *   GET  /invoices               120 invoices, numeric amounts, nulls, a lines[] array in each
  *
  * ── Auth, selected by the route prefix ───────────────────────────────────────
  *   /auth/none/*                 no credential
@@ -37,6 +46,14 @@
  *   /fail/no-array              200 with an object and no array anywhere
  *   /fail/echo-key              an ERP error that quotes the API key back at you
  *   /fail/flaky?succeed_after=  fails with 503 until the nth call, then succeeds
+ *   /fail/html-login            200 text/html sign-in page (an SSO interstitial)
+ *   /fail/error-in-200          200 whose body says success:false
+ *   /fail/json-as-html          valid JSON served as text/html
+ *   /fail/bom                   valid JSON behind a UTF-8 byte order mark
+ *   /fail/xml                   application/xml
+ *   /fail/cursor-loop           next_cursor never changes
+ *   /fail/page-ignored          claims 5 pages, ignores ?page=, so every page is page 1
+ *   /fail/total-lies            claims 500 records / 10 pages, runs dry after 120
  *   /redirect/same?n=           n same-host redirects, then the data
  *   /redirect/cross             redirects to a different host (auth must be dropped)
  *   /redirect/private           redirects to a private address (must be re-validated and refused)
@@ -84,6 +101,72 @@ function customer(i) {
     status: i % 17 === 0 ? 'blocked' : 'active',
   };
 }
+
+/** Numbers are numbers here, not strings like the customer record, and every invoice nests its lines. */
+function invoice(i) {
+  const lines = Array.from({ length: 1 + (i % 4) }, (_, j) => {
+    const quantity = 1 + ((i + j) % 9);
+    const unitPrice = Number((5 + ((i * 7 + j * 3) % 60) * 1.25).toFixed(2));
+
+    return {
+      line_no: j + 1,
+      product_code: `P${String(5001 + ((i + j) % 64))}`,
+      quantity,
+      unit_price: unitPrice,
+      line_total: Number((quantity * unitPrice).toFixed(2)),
+    };
+  });
+  const net = Number(lines.reduce((sum, l) => sum + l.line_total, 0).toFixed(2));
+  const month = 1 + (i % 9);
+  const day = String(1 + (i % 28)).padStart(2, '0');
+
+  return {
+    invoice_no: `INV-2026-${String(i).padStart(5, '0')}`,
+    customer_code: `C${String(100001 + ((i * 7) % 237))}`,
+    issue_date: `2026-${String(month).padStart(2, '0')}-${day}`,
+    // Every eleventh invoice has no due date: a real null, not a missing key.
+    due_date: i % 11 === 0 ? null : `2026-${String(month + 1).padStart(2, '0')}-${day}`,
+    currency: 'USD',
+    net_amount: net,
+    vat_amount: Number((net * 0.21).toFixed(2)),
+    paid: i % 3 === 0,
+    lines,
+  };
+}
+
+/** Names that break naive CSV, encoding and trimming. All invented. */
+const AWKWARD_NAMES = [
+  'Müller & Söhne Prüfbau GmbH',
+  'Synthétique Équipements SARL',
+  'Øresund Prøve ApS',
+  'Łódź Testowa Sp. z o.o.',
+  '合成测试贸易有限公司',
+  'شركة الاختبار الاصطناعية',
+  'Ελληνική Δοκιμή ΑΕ',
+  'Тестовая Торговля ООО',
+  'Emoji 📦🚚 Supplies Ltd',
+  'Comma, Quote "and" Apostrophe\'s Co',
+  'Line\nBreak Trading BV',
+  'Tab\tSeparated BV',
+  '  Padded Spaces BV  ',
+  'Zero​Width BV',
+  'Café Composé BV',
+  '<script>alert(1)</script> Markup BV',
+];
+
+/** One field, many types: what a sloppy ERP export really looks like. */
+const MIXED_ROWS = [
+  { customer_code: 'C900001', credit_limit: '1000', active: true, tags: ['a'] },
+  { customer_code: 'C900002', credit_limit: 1000, active: 'true', tags: 'a,b' },
+  { customer_code: 'C900003', credit_limit: 1000.5, active: 1, tags: [] },
+  { customer_code: 'C900004', credit_limit: null, active: false, tags: null },
+  { customer_code: 'C900005', active: 'N' },
+  { customer_code: 'C900006', credit_limit: '', active: 'yes', tags: [{ name: 'a' }] },
+  { customer_code: 'C900007', credit_limit: '1.000,50', active: 0, tags: ['a', 'b'] },
+  { customer_code: 900008, credit_limit: '1e3', active: null, tags: ['c'], extra_field: 'only here' },
+  { customer_code: 'C900009', credit_limit: { amount: 1000, currency: 'USD' }, active: true },
+  { customer_code: 'C900010', credit_limit: '-0', active: 'false', tags: [] },
+];
 
 function priceRow(i) {
   return {
@@ -133,6 +216,14 @@ function fromBase64url(text) {
   const b64 = text.replace(/-/g, '+').replace(/_/g, '/');
 
   return new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
+}
+
+/** The same request with one query parameter changed, as an absolute URL. Keeps every other parameter. */
+function withParam(url, name, value) {
+  const next = new URL(url);
+  next.searchParams.set(name, String(value));
+
+  return next.href;
 }
 
 function fromBase64(text) {
@@ -347,6 +438,102 @@ export function createApp(options = {}) {
         return json(200, { data: rows, meta: { total: rows.length, filtered_by: country } });
       }
 
+      case '/customers/link-header': {
+        // GitHub style: the body is a bare array and the only way forward is the Link header.
+        const size = Math.max(1, Math.min(intParam(url, 'per_page', 50), 500));
+        const page = Math.max(1, intParam(url, 'page', 1));
+        const last = Math.max(1, Math.ceil(CUSTOMERS.length / size));
+        const rels = [`<${withParam(url, 'page', 1)}>; rel="first"`, `<${withParam(url, 'page', last)}>; rel="last"`];
+        if (page < last) rels.unshift(`<${withParam(url, 'page', page + 1)}>; rel="next"`);
+        if (page > 1) rels.push(`<${withParam(url, 'page', page - 1)}>; rel="prev"`);
+
+        return json(200, CUSTOMERS.slice((page - 1) * size, page * size), {
+          link: rels.join(', '),
+          'x-total-count': String(CUSTOMERS.length),
+        });
+      }
+
+      case '/customers/next-url': {
+        // The next page as a full URL in the body, null (not absent) on the last page.
+        const size = Math.max(1, Math.min(intParam(url, 'page_size', 50), 500));
+        const page = Math.max(1, intParam(url, 'page', 1));
+
+        return json(200, {
+          results: CUSTOMERS.slice((page - 1) * size, page * size),
+          links: {
+            self: withParam(url, 'page', page),
+            next: page * size < CUSTOMERS.length ? withParam(url, 'page', page + 1) : null,
+          },
+        });
+      }
+
+      case '/customers/odata': {
+        // OData v4 (Dynamics, SAP): records at $.value, @odata.nextLink absent on the last page.
+        const top = Math.max(1, Math.min(intParam(url, '$top', 50), 500));
+        const skip = Math.max(0, intParam(url, '$skip', 0));
+
+        return json(200, {
+          '@odata.context': `${url.origin}/$metadata#Customers`,
+          '@odata.count': CUSTOMERS.length,
+          value: CUSTOMERS.slice(skip, skip + top),
+          ...(skip + top < CUSTOMERS.length ? { '@odata.nextLink': withParam(url, '$skip', skip + top) } : {}),
+        }, { 'content-type': 'application/json; odata.metadata=minimal' });
+      }
+
+      case '/customers/has-more': {
+        // Stripe style: the cursor is the last record's own id, and there is no total at all.
+        const limit = Math.max(1, Math.min(intParam(url, 'limit', 50), 100));
+        const after = url.searchParams.get('starting_after');
+        let start = 0;
+        if (after !== null && after !== '') {
+          const index = CUSTOMERS.findIndex((c) => c.customer_code === after);
+          if (index === -1) return problem(400, 'INVALID_CURSOR', `No customer ${after} to start after.`);
+          start = index + 1;
+        }
+        const slice = CUSTOMERS.slice(start, start + limit);
+
+        return json(200, { object: 'list', data: slice, has_more: start + limit < CUSTOMERS.length });
+      }
+
+      case '/customers/top-level-array':
+        // No envelope: the root of the document is the array.
+        return json(200, CUSTOMERS);
+
+      case '/customers/updated-since': {
+        // Incremental sync: only records changed at or after ?updated_since= (ISO 8601).
+        const since = url.searchParams.get('updated_since');
+        const sinceMs = since === null || since === '' ? 0 : Date.parse(since);
+        if (Number.isNaN(sinceMs)) return problem(400, 'INVALID_DATE', `updated_since is not an ISO 8601 date: ${since}`);
+        const rows = CUSTOMERS
+          .map((c, i) => ({ ...c, updated_at: new Date(Date.UTC(2026, 0, 1) + i * 86400000).toISOString() }))
+          .filter((c) => Date.parse(c.updated_at) >= sinceMs);
+
+        return json(200, { data: rows, meta: { total: rows.length, updated_since: since } });
+      }
+
+      case '/customers/unicode':
+        return json(200, {
+          data: AWKWARD_NAMES.map((name, i) => ({
+            customer_code: `C${String(800001 + i)}`,
+            customer_name: name,
+            country: COUNTRIES[i % COUNTRIES.length],
+          })),
+        });
+
+      case '/customers/mixed-types':
+        return json(200, { data: MIXED_ROWS });
+
+      case '/invoices': {
+        // A document-shaped resource: 120 invoices, page pagination, an array of lines inside each.
+        const total = 120;
+        const size = Math.max(1, Math.min(intParam(url, 'page_size', 25), 100));
+        const page = Math.max(1, intParam(url, 'page', 1));
+        const rows = [];
+        for (let i = (page - 1) * size; i < Math.min(page * size, total); i++) rows.push(invoice(i + 1));
+
+        return json(200, { data: rows, meta: { page, page_size: size, total, total_pages: Math.ceil(total / size) } });
+      }
+
       default:
         return problem(404, 'NOT_FOUND', `No such resource: ${path}`);
     }
@@ -438,6 +625,52 @@ export function createApp(options = {}) {
         }
 
         return json(200, { data: CUSTOMERS.slice(0, 5), meta: { attempts: seen } });
+      }
+
+      case '/html-login':
+        // An SSO interstitial: 200, and nothing about it is data.
+        return raw(200, 'text/html; charset=utf-8',
+          '<!doctype html><html><head><title>Sign in</title></head><body>'
+          + '<form method="post" action="/login"><input name="username"><input name="password" type="password">'
+          + '<button>Sign in</button></form></body></html>');
+
+      case '/error-in-200':
+        // The status says success; the body says otherwise.
+        return json(200, { success: false, data: null, error: { code: 'SESSION_EXPIRED', message: 'Please log in again.' } });
+
+      case '/json-as-html':
+        // Valid JSON under the wrong content type.
+        return raw(200, 'text/html', JSON.stringify({ data: CUSTOMERS.slice(0, 5) }));
+
+      case '/bom':
+        // Valid JSON preceded by a UTF-8 byte order mark, which JSON.parse refuses.
+        return raw(200, 'application/json; charset=utf-8', `﻿${JSON.stringify({ data: CUSTOMERS.slice(0, 5) })}`);
+
+      case '/xml':
+        return raw(200, 'application/xml',
+          `<?xml version="1.0" encoding="UTF-8"?><customers>${CUSTOMERS.slice(0, 5)
+            .map((c) => `<customer><code>${c.customer_code}</code><name>${c.customer_name}</name></customer>`)
+            .join('')}</customers>`);
+
+      case '/cursor-loop':
+        // Hands back the same cursor for ever: the walk has to notice it is going round in circles.
+        return json(200, { data: CUSTOMERS.slice(0, 10), paging: { next_cursor: base64url('0'), returned: 10 } });
+
+      case '/page-ignored':
+        // Claims five pages but ignores ?page=, so every page is page 1 again.
+        return json(200, {
+          data: CUSTOMERS.slice(0, 50),
+          meta: { page: intParam(url, 'page', 1), page_size: 50, total: 250, total_pages: 5 },
+        });
+
+      case '/total-lies': {
+        // Says 500 records over 10 pages, but runs dry after 120: pages 4 onward are empty.
+        const page = Math.max(1, intParam(url, 'page', 1));
+
+        return json(200, {
+          data: CUSTOMERS.slice(0, 120).slice((page - 1) * 50, page * 50),
+          meta: { page, page_size: 50, total: 500, total_pages: 10 },
+        });
       }
 
       default:
