@@ -1,0 +1,14 @@
+{
+  "name": "erp-mock",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A stand-in ERP with synthetic data, for testing Docupath Connected Data Sources.",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
