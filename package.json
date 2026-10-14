@@ -4,9 +4,12 @@
   "private": true,
   "description": "A stand-in ERP with synthetic data, for testing Docupath Connected Data Sources.",
   "type": "module",
-  "main": "server.mjs",
+  "main": "app.mjs",
   "scripts": {
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "dev:worker": "npx wrangler@4 dev",
+    "deploy": "npx wrangler@4 deploy",
+    "smoke": "node smoke.mjs"
   },
   "engines": {
     "node": ">=18"
