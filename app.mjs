@@ -468,7 +468,7 @@ export function createApp(options = {}) {
     if (calls.length > MAX_CALLS) calls.splice(0, calls.length - MAX_CALLS);
 
     // ── introspection ──
-    if (path === '/_health') return json(200, { ok: true, customers: CUSTOMERS.length, prices: PRICES.length });
+    if (path === '/_health') return json(200, { ok: true, service: 'erp-mock', customers: CUSTOMERS.length, prices: PRICES.length });
     if (path === '/_calls' || path === '/_reset') {
       if (adminToken !== '' && request.headers.get('authorization') !== `Bearer ${adminToken}`) {
         return problem(401, 'ADMIN_ONLY', 'Introspection needs the admin token.');
