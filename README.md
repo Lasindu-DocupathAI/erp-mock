@@ -26,7 +26,7 @@ The public HTTPS deployment needs neither.
 
 ## Deployed (Cloudflare Workers, free plan)
 
-Always on, no cold start, about 100,000 requests a day on the free plan.
+Live: **https://erp-mock.erp-mock.workers.dev** — always on, no cold start, about 100,000 requests a day on the free plan.
 
 ```bash
 npx wrangler@4 login                       # once, opens the browser
