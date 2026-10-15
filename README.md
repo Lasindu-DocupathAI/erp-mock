@@ -68,8 +68,19 @@ Append a data route to an auth prefix, e.g. `/auth/apikey-header/customers`.
 | `/customers/many-pages` | 5,000 records, 10 per page — exceeds the 20-page cap |
 | `/prices` | a second catalogue (64 rows) |
 | `POST /customers/search` | JSON body `{"country":"NL"}` filters |
+| `/customers/link-header` | bare array, next page only in the `Link` header (`?page=&per_page=`) |
+| `/customers/next-url` | records at `$.results`, next page as an absolute URL in `$.links.next`, `null` at the end |
+| `/customers/odata` | OData v4: `$.value`, `$top`/`$skip`, `@odata.nextLink` absent at the end |
+| `/customers/has-more` | Stripe style `?starting_after=<customer_code>&limit=`, `has_more`, no total |
+| `/customers/top-level-array` | no envelope: the root is the array |
+| `/customers/updated-since` | incremental `?updated_since=<ISO 8601>`; 400 on a bad date |
+| `/customers/unicode` | 16 names that break encoding, CSV quoting and trimming |
+| `/customers/mixed-types` | one field, many types: strings, numbers, null, missing, objects |
+| `/invoices` | 120 invoices, numeric amounts, nulls, a `lines` array in each (`?page=&page_size=`) |
 
 Failure routes (no auth prefix): `/fail/401` `/403` `/404` `/429` `/429-long` `/500` `/502` `/503` `/504`,
 `/fail/slow?ms=`, `/fail/huge?mb=`, `/fail/not-json`, `/fail/bad-json`, `/fail/deep?depth=`,
 `/fail/empty-array`, `/fail/no-array`, `/fail/echo-key`, `/fail/flaky?succeed_after=&key=`,
+`/fail/html-login`, `/fail/error-in-200`, `/fail/json-as-html`, `/fail/bom`, `/fail/xml`,
+`/fail/cursor-loop`, `/fail/page-ignored`, `/fail/total-lies`,
 `/redirect/same?n=`, `/redirect/cross`, `/redirect/private`.

@@ -139,6 +139,81 @@ await check('POST search filters', async () => {
   expect(body.data.length > 0 && body.data.every((c) => c.country === 'NL'), `${body.data.length}`);
 });
 
+await check('link-header, next-url, odata and has-more each walk 237 and stop', async () => {
+  const walk = async (first, step) => {
+    let total = 0;
+    let next = first;
+    for (let i = 0; next && i < 20; i++) {
+      const res = await fetch(next);
+      next = await step(res, (n) => { total += n; });
+    }
+    expect(next === null, `did not stop (${total})`);
+
+    return total;
+  };
+  const linkTotal = await walk(`${base}/auth/none/customers/link-header`, async (res, add) => {
+    add((await res.json()).length);
+
+    return /<([^>]+)>;\s*rel="next"/.exec(res.headers.get('link') ?? '')?.[1] ?? null;
+  });
+  expect(linkTotal === 237, `link-header ${linkTotal}`);
+  const nextTotal = await walk(`${base}/auth/none/customers/next-url`, async (res, add) => {
+    const body = await res.json();
+    add(body.results.length);
+
+    return body.links.next;
+  });
+  expect(nextTotal === 237, `next-url ${nextTotal}`);
+  const odataTotal = await walk(`${base}/auth/none/customers/odata`, async (res, add) => {
+    const body = await res.json();
+    add(body.value.length);
+
+    return body['@odata.nextLink'] ?? null;
+  });
+  expect(odataTotal === 237, `odata ${odataTotal}`);
+  const stripeTotal = await walk(`${base}/auth/none/customers/has-more`, async (res, add) => {
+    const body = await res.json();
+    add(body.data.length);
+
+    return body.has_more ? `${base}/auth/none/customers/has-more?starting_after=${body.data.at(-1).customer_code}` : null;
+  });
+  expect(stripeTotal === 237, `has-more ${stripeTotal}`);
+  expect((await get('/auth/none/customers/has-more?starting_after=nope')).status === 400, 'has-more bad cursor');
+});
+
+await check('top-level-array, updated-since, unicode, mixed-types, invoices', async () => {
+  expect((await (await get('/auth/none/customers/top-level-array')).json()).length === 237, 'top-level-array');
+  const since = await (await get('/auth/none/customers/updated-since?updated_since=2026-08-01T00:00:00Z')).json();
+  expect(since.data.length === 25 && since.data.every((c) => c.updated_at >= '2026-08-01'), `updated-since ${since.data.length}`);
+  expect((await get('/auth/none/customers/updated-since?updated_since=yesterday')).status === 400, 'updated-since bad date');
+  const uni = await (await get('/auth/none/customers/unicode')).json();
+  expect(uni.data.length === 16 && uni.data.some((c) => c.customer_name.includes('📦')), 'unicode');
+  expect((await (await get('/auth/none/customers/mixed-types')).json()).data.length === 10, 'mixed-types');
+  const inv = await (await get('/auth/none/invoices?page=5')).json();
+  expect(inv.data.length === 20 && inv.meta.total === 120 && inv.data.every((i) => i.lines.length >= 1), 'invoices');
+});
+
+await check('html-login, error-in-200, json-as-html, bom, xml', async () => {
+  expect((await get('/fail/html-login')).headers.get('content-type').startsWith('text/html'), 'html-login');
+  expect((await (await get('/fail/error-in-200')).json()).success === false, 'error-in-200');
+  const asHtml = await get('/fail/json-as-html');
+  expect(asHtml.headers.get('content-type') === 'text/html' && JSON.parse(await asHtml.text()).data.length === 5, 'json-as-html');
+  const bom = new Uint8Array(await (await get('/fail/bom')).arrayBuffer());
+  expect(bom[0] === 0xef && bom[1] === 0xbb && bom[2] === 0xbf, 'bom');
+  expect((await (await get('/fail/xml')).text()).startsWith('<?xml'), 'xml');
+});
+
+await check('cursor-loop, page-ignored, total-lies', async () => {
+  const a = await (await get('/fail/cursor-loop')).json();
+  const b = await (await get(`/fail/cursor-loop?cursor=${a.paging.next_cursor}`)).json();
+  expect(a.paging.next_cursor === b.paging.next_cursor, 'cursor-loop');
+  const p1 = await (await get('/fail/page-ignored?page=1')).json();
+  const p3 = await (await get('/fail/page-ignored?page=3')).json();
+  expect(p1.data[0].customer_code === p3.data[0].customer_code && p3.meta.total_pages === 5, 'page-ignored');
+  const lies = await (await get('/fail/total-lies?page=4')).json();
+  expect(lies.data.length === 0 && lies.meta.total === 500, 'total-lies');
+});
+
 await check('failure statuses', async () => {
   for (const s of [401, 403, 404, 429, 500, 502, 503, 504]) {
     expect((await get(`/fail/${s}`)).status === s, `${s}`);
