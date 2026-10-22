@@ -25,6 +25,16 @@
  *   GET  /customers/mixed-types  one field, many types: strings, numbers, null, missing, objects
  *   GET  /invoices               120 invoices, numeric amounts, nulls, a lines[] array in each
  *
+ * ── Versions of one list, for editing a connection ───────────────────────────
+ * The same 237 customers, with the fields changed between versions. Approve a connection on v1,
+ * then Edit it to point at another version: only an edit that keeps every v1 field may be saved.
+ *   GET  /customers/v1                  customer_code, customer_name, country, status
+ *   GET  /customers/v2-added-fields     v1 + email, payment_terms          -> saves, 2 new fields
+ *   GET  /customers/v3-dropped-field    v1 without status                  -> refused, status missing
+ *   GET  /customers/v4-renamed-case     customer_name as Customer_Name     -> refused, case counts
+ *   GET  /customers/v5-renamed-field    customer_name as name              -> refused, customer_name missing
+ *   GET  /customers/v6-reordered        v1 fields in another order         -> saves, nothing new
+ *
  * ── Auth, selected by the route prefix ───────────────────────────────────────
  *   /auth/none/*                 no credential
  *   /auth/apikey-header/*        X-API-Key: <API_KEY>
@@ -32,6 +42,7 @@
  *   /auth/bearer/*               Authorization: Bearer <BEARER_TOKEN>
  *   /auth/basic/*                Authorization: Basic base64(USER:PASS)
  *   /auth/oauth/*                Authorization: Bearer <minted token>
+ *   /auth/apikey-v2/*            X-API-Key: <API_KEY_V2>, a different key; <API_KEY> is refused
  *   POST /oauth/token            client_credentials, in body or HTTP Basic
  *
  * ── Failure routes, one per Figure 4 row ─────────────────────────────────────
@@ -81,6 +92,8 @@ export const BASIC_USER = 'erp_service_account';
 export const BASIC_PASS = 'erp-basic-pass-9D41';
 export const OAUTH_CLIENT_ID = 'docupath-local-client';
 export const OAUTH_CLIENT_SECRET = 'erp-oauth-secret-B72C';
+/** A second key, for editing a connection's credentials: only it opens /auth/apikey-v2/*. */
+export const API_KEY_V2 = 'erp-api-key-v2-4C19E7AB';
 
 /** Bounded, so a public deployment's scanner traffic cannot grow the log without limit. */
 const MAX_CALLS = 500;
@@ -167,6 +180,33 @@ const MIXED_ROWS = [
   { customer_code: 'C900009', credit_limit: { amount: 1000, currency: 'USD' }, active: true },
   { customer_code: 'C900010', credit_limit: '-0', active: 'false', tags: [] },
 ];
+
+/**
+ * One customer as each version of the list returns it. Built from customer(), so every version
+ * carries the same people and only the fields differ.
+ */
+const CUSTOMER_VERSIONS = {
+  '/customers/v1': (c) => ({
+    customer_code: c.customer_code, customer_name: c.customer_name, country: c.country, status: c.status,
+  }),
+  '/customers/v2-added-fields': (c, i) => ({
+    customer_code: c.customer_code, customer_name: c.customer_name, country: c.country, status: c.status,
+    email: `accounts${i}@synthetic-trading.example`,
+    payment_terms: ['NET30', 'NET60', 'PREPAID'][i % 3],
+  }),
+  '/customers/v3-dropped-field': (c) => ({
+    customer_code: c.customer_code, customer_name: c.customer_name, country: c.country,
+  }),
+  '/customers/v4-renamed-case': (c) => ({
+    customer_code: c.customer_code, Customer_Name: c.customer_name, country: c.country, status: c.status,
+  }),
+  '/customers/v5-renamed-field': (c) => ({
+    customer_code: c.customer_code, name: c.customer_name, country: c.country, status: c.status,
+  }),
+  '/customers/v6-reordered': (c) => ({
+    status: c.status, country: c.country, customer_name: c.customer_name, customer_code: c.customer_code,
+  }),
+};
 
 function priceRow(i) {
   return {
@@ -307,6 +347,11 @@ export function createApp(options = {}) {
           ? null
           : { status: 401, code: 'INVALID_API_KEY', message: 'The X-API-Key header is missing or not recognised.' };
 
+      case 'apikey-v2':
+        return request.headers.get('x-api-key') === API_KEY_V2
+          ? null
+          : { status: 401, code: 'INVALID_API_KEY', message: 'The X-API-Key header is missing or not the v2 key.' };
+
       case 'apikey-query':
         return url.searchParams.get('api_key') === API_KEY
           ? null
@@ -333,6 +378,11 @@ export function createApp(options = {}) {
   // ── data routes ────────────────────────────────────────────────────────────
 
   function serveData(path, url, body) {
+    const version = CUSTOMER_VERSIONS[path];
+    if (version !== undefined) {
+      return json(200, { data: CUSTOMERS.map((c, i) => version(c, i + 1)), meta: { total: CUSTOMERS.length } });
+    }
+
     switch (path) {
       case '/customers': {
         const size = Math.max(1, Math.min(intParam(url, 'page_size', 50), 500));
@@ -756,7 +806,7 @@ export function createApp(options = {}) {
     if (path.startsWith('/fail/')) return serveFailure(path, url);
 
     // ── authenticated data ──
-    const m = /^\/auth\/([a-z-]+)(\/.*)$/.exec(path);
+    const m = /^\/auth\/([a-z0-9-]+)(\/.*)$/.exec(path);
     if (m !== null) {
       const [, scheme, rest] = m;
       const refusal = await checkAuth(scheme, request, url);

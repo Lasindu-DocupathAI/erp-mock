@@ -52,6 +52,7 @@ HMAC), so a token minted by one instance works on every other. `/_calls`, `/_res
 | Bearer | `/auth/bearer/*` | `erp-bearer-5E2B88A0` |
 | Basic | `/auth/basic/*` | `erp_service_account` / `erp-basic-pass-9D41` |
 | OAuth2 client credentials | `/auth/oauth/*` | `POST /oauth/token` with `docupath-local-client` / `erp-oauth-secret-B72C` (body or HTTP Basic) |
+| API key header, second key | `/auth/apikey-v2/*` | `X-API-Key: erp-api-key-v2-4C19E7AB` — the original key is refused here, and this one on `/auth/apikey-header/*` |
 
 ## Routes
 
@@ -77,6 +78,25 @@ Append a data route to an auth prefix, e.g. `/auth/apikey-header/customers`.
 | `/customers/unicode` | 16 names that break encoding, CSV quoting and trimming |
 | `/customers/mixed-types` | one field, many types: strings, numbers, null, missing, objects |
 | `/invoices` | 120 invoices, numeric amounts, nulls, a `lines` array in each (`?page=&page_size=`) |
+
+### Versions of one list, for editing a connection
+
+The same 237 customers at `$.data`, with the fields changed between versions. Approve a connection on
+`v1`, then **Edit** it to point at another version. An edit must keep every field the connection already
+returns (rules may read them), compared exactly; new fields may be added.
+
+| Data route | Fields | Expected when an edit moves a `v1` connection here |
+|---|---|---|
+| `/customers/v1` | `customer_code`, `customer_name`, `country`, `status` | the baseline |
+| `/customers/v2-added-fields` | `v1` + `email`, `payment_terms` | saves; the two new fields are listed |
+| `/customers/v3-dropped-field` | `v1` without `status` | refused: `status` missing |
+| `/customers/v4-renamed-case` | `customer_name` as `Customer_Name` | refused: `customer_name` missing (case counts) |
+| `/customers/v5-renamed-field` | `customer_name` as `name` | refused: `customer_name` missing |
+| `/customers/v6-reordered` | the `v1` fields in another order | saves; nothing new |
+
+Pair it with `/auth/apikey-v2/*` to edit the credentials as well: a `v1` connection on
+`/auth/apikey-header/customers/v1`, edited to `/auth/apikey-v2/customers/v2-added-fields`, only passes
+its test once the key is replaced with the v2 key.
 
 Failure routes (no auth prefix): `/fail/401` `/403` `/404` `/429` `/429-long` `/500` `/502` `/503` `/504`,
 `/fail/slow?ms=`, `/fail/huge?mb=`, `/fail/not-json`, `/fail/bad-json`, `/fail/deep?depth=`,

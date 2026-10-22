@@ -193,6 +193,34 @@ await check('top-level-array, updated-since, unicode, mixed-types, invoices', as
   expect(inv.data.length === 20 && inv.meta.total === 120 && inv.data.every((i) => i.lines.length >= 1), 'invoices');
 });
 
+await check('customer versions: same people, fields changed as documented', async () => {
+  const fieldsOf = async (path) => {
+    const body = await (await get(`/auth/none${path}`)).json();
+    expect(body.data.length === 237, `${path} returned ${body.data.length}`);
+    expect(body.data[0].customer_code === 'C100001', `${path} first row`);
+
+    return Object.keys(body.data[0]);
+  };
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const v1 = ['customer_code', 'customer_name', 'country', 'status'];
+  expect(same(await fieldsOf('/customers/v1'), v1), 'v1');
+  expect(same(await fieldsOf('/customers/v2-added-fields'), [...v1, 'email', 'payment_terms']), 'v2');
+  expect(same(await fieldsOf('/customers/v3-dropped-field'), ['customer_code', 'customer_name', 'country']), 'v3');
+  expect(same(await fieldsOf('/customers/v4-renamed-case'), ['customer_code', 'Customer_Name', 'country', 'status']), 'v4');
+  expect(same(await fieldsOf('/customers/v5-renamed-field'), ['customer_code', 'name', 'country', 'status']), 'v5');
+  const v6 = await fieldsOf('/customers/v6-reordered');
+  expect(!same(v6, v1) && same([...v6].sort(), [...v1].sort()), 'v6');
+});
+
+await check('apikey-v2: the v2 key opens it, the original key does not', async () => {
+  const withV2 = await get('/auth/apikey-v2/customers/v2-added-fields', { headers: { 'x-api-key': 'erp-api-key-v2-4C19E7AB' } });
+  expect(withV2.status === 200 && (await withV2.json()).data.length === 237, `v2 key: ${withV2.status}`);
+  const withV1 = await get('/auth/apikey-v2/customers/v2-added-fields', { headers: { 'x-api-key': KEY } });
+  expect(withV1.status === 401, `original key: ${withV1.status}`);
+  const v2OnOld = await get('/auth/apikey-header/customers/v1', { headers: { 'x-api-key': 'erp-api-key-v2-4C19E7AB' } });
+  expect(v2OnOld.status === 401, `v2 key on the original route: ${v2OnOld.status}`);
+});
+
 await check('html-login, error-in-200, json-as-html, bom, xml', async () => {
   expect((await get('/fail/html-login')).headers.get('content-type').startsWith('text/html'), 'html-login');
   expect((await (await get('/fail/error-in-200')).json()).success === false, 'error-in-200');
