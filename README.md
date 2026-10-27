@@ -98,6 +98,17 @@ Pair it with `/auth/apikey-v2/*` to edit the credentials as well: a `v1` connect
 `/auth/apikey-header/customers/v1`, edited to `/auth/apikey-v2/customers/v2-added-fields`, only passes
 its test once the key is replaced with the v2 key.
 
+### A source that goes down later
+
+`/customers/available-until/<unix seconds>` returns the `/customers/flat` list until that moment,
+then `503 UNAVAILABLE` with `Retry-After: 3600` (`?fail_status=500|502|504` for another outage).
+Use it behind any auth prefix, e.g.
+`/auth/apikey-header/customers/available-until/1793100000`. A connection set up and approved
+before the moment passes its test; documents processed after it find the source down. The
+moment lives in the URL, not in state, so every Workers instance agrees on it. Docupath caches a
+connection's records for 15 minutes, so a document only meets the outage once the last good read
+has also aged out of that cache.
+
 Failure routes (no auth prefix): `/fail/401` `/403` `/404` `/429` `/429-long` `/500` `/502` `/503` `/504`,
 `/fail/slow?ms=`, `/fail/huge?mb=`, `/fail/not-json`, `/fail/bad-json`, `/fail/deep?depth=`,
 `/fail/empty-array`, `/fail/no-array`, `/fail/echo-key`, `/fail/flaky?succeed_after=&key=`,

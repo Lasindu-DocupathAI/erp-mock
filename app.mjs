@@ -35,6 +35,13 @@
  *   GET  /customers/v5-renamed-field    customer_name as name              -> refused, customer_name missing
  *   GET  /customers/v6-reordered        v1 fields in another order         -> saves, nothing new
  *
+ * ── A source that goes down later ────────────────────────────────────────────
+ *   GET  /customers/available-until/<unix seconds>
+ *        The /customers/flat list until that moment, then 503 (or ?fail_status=500|502|504) with
+ *        Retry-After. The moment is in the URL, not in state, so every Workers instance agrees on
+ *        it: a connection set up before it passes its test and is approved, and the documents
+ *        processed after it find the source down. Pair it with any auth prefix.
+ *
  * ── Auth, selected by the route prefix ───────────────────────────────────────
  *   /auth/none/*                 no credential
  *   /auth/apikey-header/*        X-API-Key: <API_KEY>
@@ -377,7 +384,38 @@ export function createApp(options = {}) {
 
   // ── data routes ────────────────────────────────────────────────────────────
 
+  /**
+   * The flat customer list while the clock is before `availableUntil` (unix seconds), and an
+   * outage after it: what a real ERP looks like when it works while a connection is set up and is
+   * down by the time documents are processed against it.
+   */
+  function serveUntil(availableUntil, url) {
+    const now = Math.floor(Date.now() / 1000);
+    if (now < availableUntil) {
+      return json(200, { data: CUSTOMERS, meta: { total: CUSTOMERS.length, available_until: availableUntil } });
+    }
+
+    const outages = {
+      500: ['INTERNAL', 'The ERP had an internal error.'],
+      502: ['BAD_GATEWAY', 'Upstream refused.'],
+      503: ['UNAVAILABLE', 'The ERP is down for maintenance.'],
+      504: ['GATEWAY_TIMEOUT', 'Upstream timed out.'],
+    };
+    const asked = intParam(url, 'fail_status', 503);
+    const status = outages[asked] ? asked : 503;
+    const [code, message] = outages[status];
+
+    return json(
+      status,
+      { error: { code, message, down_since: new Date(availableUntil * 1000).toISOString() } },
+      { 'retry-after': '3600' },
+    );
+  }
+
   function serveData(path, url, body) {
+    const until = /^\/customers\/available-until\/(\d{1,12})$/.exec(path);
+    if (until !== null) return serveUntil(Number(until[1]), url);
+
     const version = CUSTOMER_VERSIONS[path];
     if (version !== undefined) {
       return json(200, { data: CUSTOMERS.map((c, i) => version(c, i + 1)), meta: { total: CUSTOMERS.length } });

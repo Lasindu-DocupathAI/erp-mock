@@ -221,6 +221,26 @@ await check('apikey-v2: the v2 key opens it, the original key does not', async (
   expect(v2OnOld.status === 401, `v2 key on the original route: ${v2OnOld.status}`);
 });
 
+await check('available-until: up before the moment, 503 after it, any auth prefix', async () => {
+  const soon = Math.floor(Date.now() / 1000) + 3600;
+  const up = await get(`/auth/apikey-header/customers/available-until/${soon}`, { headers: { 'x-api-key': KEY } });
+  const upBody = await up.json();
+  expect(up.status === 200 && upBody.data.length === 237 && upBody.meta.available_until === soon, `before: ${up.status}`);
+
+  const past = Math.floor(Date.now() / 1000) - 1;
+  const down = await get(`/auth/apikey-header/customers/available-until/${past}`, { headers: { 'x-api-key': KEY } });
+  expect(down.status === 503 && down.headers.get('retry-after') === '3600', `after: ${down.status}`);
+  expect((await down.json()).error.code === 'UNAVAILABLE', 'after: code');
+
+  const gateway = await get(`/auth/none/customers/available-until/${past}?fail_status=502`);
+  expect(gateway.status === 502, `fail_status=502: ${gateway.status}`);
+  const unknown = await get(`/auth/none/customers/available-until/${past}?fail_status=418`);
+  expect(unknown.status === 503, `fail_status=418 falls back to 503: ${unknown.status}`);
+
+  const wrongKey = await get(`/auth/apikey-header/customers/available-until/${soon}`, { headers: { 'x-api-key': 'nope' } });
+  expect(wrongKey.status === 401, `wrong key still refused: ${wrongKey.status}`);
+});
+
 await check('html-login, error-in-200, json-as-html, bom, xml', async () => {
   expect((await get('/fail/html-login')).headers.get('content-type').startsWith('text/html'), 'html-login');
   expect((await (await get('/fail/error-in-200')).json()).success === false, 'error-in-200');
