@@ -241,6 +241,29 @@ await check('available-until: up before the moment, 503 after it, any auth prefi
   expect(wrongKey.status === 401, `wrong key still refused: ${wrongKey.status}`);
 });
 
+await check('down-between: up before the window, down inside it, back up after it', async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const before = await get(`/auth/apikey-header/customers/down-between/${now + 600}/${now + 1200}`, { headers: { 'x-api-key': KEY } });
+  const beforeBody = await before.json();
+  expect(before.status === 200 && beforeBody.data.length === 237, `before: ${before.status}`);
+
+  const inside = await get(`/auth/apikey-header/customers/down-between/${now - 60}/${now + 600}`, { headers: { 'x-api-key': KEY } });
+  const retryAfter = Number(inside.headers.get('retry-after'));
+  expect(inside.status === 503 && retryAfter > 0 && retryAfter <= 600, `inside: ${inside.status}, retry-after ${retryAfter}`);
+  expect((await inside.json()).error.code === 'UNAVAILABLE', 'inside: code');
+
+  const after = await get(`/auth/none/customers/down-between/${now - 600}/${now - 60}`);
+  expect(after.status === 200 && (await after.json()).data.length === 237, `after: ${after.status}`);
+
+  const gateway = await get(`/auth/none/customers/down-between/${now - 60}/${now + 600}?fail_status=504`);
+  expect(gateway.status === 504, `fail_status=504: ${gateway.status}`);
+  const reversed = await get(`/auth/none/customers/down-between/${now + 600}/${now}`);
+  expect(reversed.status === 400, `a window that ends before it starts: ${reversed.status}`);
+
+  const wrongKey = await get(`/auth/apikey-header/customers/down-between/${now + 600}/${now + 1200}`, { headers: { 'x-api-key': 'nope' } });
+  expect(wrongKey.status === 401, `wrong key still refused: ${wrongKey.status}`);
+});
+
 await check('html-login, error-in-200, json-as-html, bom, xml', async () => {
   expect((await get('/fail/html-login')).headers.get('content-type').startsWith('text/html'), 'html-login');
   expect((await (await get('/fail/error-in-200')).json()).success === false, 'error-in-200');

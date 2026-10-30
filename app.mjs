@@ -41,6 +41,9 @@
  *        Retry-After. The moment is in the URL, not in state, so every Workers instance agrees on
  *        it: a connection set up before it passes its test and is approved, and the documents
  *        processed after it find the source down. Pair it with any auth prefix.
+ *   GET  /customers/down-between/<from unix seconds>/<until unix seconds>
+ *        The same list, down only inside the window and back up from <until> on, with Retry-After
+ *        counting down to it. For a paused connection that must reconnect once its ERP answers again.
  *
  * ── Auth, selected by the route prefix ───────────────────────────────────────
  *   /auth/none/*                 no credential
@@ -395,6 +398,30 @@ export function createApp(options = {}) {
       return json(200, { data: CUSTOMERS, meta: { total: CUSTOMERS.length, available_until: availableUntil } });
     }
 
+    return outage(url, availableUntil, 3600);
+  }
+
+  /**
+   * The flat customer list outside the window and an outage inside it: an ERP that goes down for
+   * maintenance and comes back. A connection set up before `downFrom` passes its test, a read
+   * inside the window fails, and the first read from `downUntil` on succeeds again, so a paused
+   * connection has something to reconnect to.
+   */
+  function serveBetween(downFrom, downUntil, url) {
+    if (downFrom >= downUntil) {
+      return problem(400, 'BAD_WINDOW', 'The outage must start before it ends.', { down_from: downFrom, down_until: downUntil });
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    if (now < downFrom || now >= downUntil) {
+      return json(200, { data: CUSTOMERS, meta: { total: CUSTOMERS.length, down_from: downFrom, down_until: downUntil } });
+    }
+
+    return outage(url, downFrom, downUntil - now);
+  }
+
+  /** The answer of an ERP that is down: 503, or the status `?fail_status=` asks for. */
+  function outage(url, downSince, retryAfter) {
     const outages = {
       500: ['INTERNAL', 'The ERP had an internal error.'],
       502: ['BAD_GATEWAY', 'Upstream refused.'],
@@ -407,14 +434,17 @@ export function createApp(options = {}) {
 
     return json(
       status,
-      { error: { code, message, down_since: new Date(availableUntil * 1000).toISOString() } },
-      { 'retry-after': '3600' },
+      { error: { code, message, down_since: new Date(downSince * 1000).toISOString() } },
+      { 'retry-after': String(retryAfter) },
     );
   }
 
   function serveData(path, url, body) {
     const until = /^\/customers\/available-until\/(\d{1,12})$/.exec(path);
     if (until !== null) return serveUntil(Number(until[1]), url);
+
+    const between = /^\/customers\/down-between\/(\d{1,12})\/(\d{1,12})$/.exec(path);
+    if (between !== null) return serveBetween(Number(between[1]), Number(between[2]), url);
 
     const version = CUSTOMER_VERSIONS[path];
     if (version !== undefined) {

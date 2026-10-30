@@ -109,6 +109,14 @@ moment lives in the URL, not in state, so every Workers instance agrees on it. D
 connection's records for 15 minutes, so a document only meets the outage once the last good read
 has also aged out of that cache.
 
+### A source that goes down and comes back
+
+`/customers/down-between/<from unix seconds>/<until unix seconds>` returns the same list before
+`<from>` and again from `<until>` on, and the outage above in between, with `Retry-After` counting
+down to `<until>`. A connection approved before the window, then restored or refreshed inside it,
+finds the source down and pauses; the first read after the window should reconnect it. A window
+that ends before it starts answers `400 BAD_WINDOW`.
+
 Failure routes (no auth prefix): `/fail/401` `/403` `/404` `/429` `/429-long` `/500` `/502` `/503` `/504`,
 `/fail/slow?ms=`, `/fail/huge?mb=`, `/fail/not-json`, `/fail/bad-json`, `/fail/deep?depth=`,
 `/fail/empty-array`, `/fail/no-array`, `/fail/echo-key`, `/fail/flaky?succeed_after=&key=`,
