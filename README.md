@@ -117,6 +117,15 @@ down to `<until>`. A connection approved before the window, then restored or ref
 finds the source down and pauses; the first read after the window should reconnect it. A window
 that ends before it starts answers `400 BAD_WINDOW`.
 
+### A source that empties later
+
+`/customers/empty-after/<unix seconds>` returns the `/customers/flat` list until that moment, then
+`200` with `{"data": [], "meta": {"total": 0}}`: an ERP that still answers, with nothing in the list.
+A connection set up and approved before the moment has columns; its View page, and documents
+processed after the moment, meet an empty source. A moment already past (`/customers/empty-after/0`)
+is a list that is empty from the start behind any auth prefix, for the setup screen's zero-records
+case with a credential. `/fail/empty-array` is the same answer without one.
+
 Failure routes (no auth prefix): `/fail/401` `/403` `/404` `/429` `/429-long` `/500` `/502` `/503` `/504`,
 `/fail/slow?ms=`, `/fail/huge?mb=`, `/fail/not-json`, `/fail/bad-json`, `/fail/deep?depth=`,
 `/fail/empty-array`, `/fail/no-array`, `/fail/echo-key`, `/fail/flaky?succeed_after=&key=`,

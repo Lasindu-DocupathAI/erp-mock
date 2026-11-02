@@ -45,6 +45,13 @@
  *        The same list, down only inside the window and back up from <until> on, with Retry-After
  *        counting down to it. For a paused connection that must reconnect once its ERP answers again.
  *
+ * ── A source that empties later ──────────────────────────────────────────────
+ *   GET  /customers/empty-after/<unix seconds>
+ *        The /customers/flat list until that moment, then 200 with zero records ($.data is []).
+ *        Approve a connection while it has rows; its View page and later documents then meet an
+ *        empty source. A moment already past (0) is empty from the start, behind any auth prefix,
+ *        which /fail/empty-array cannot be.
+ *
  * ── Auth, selected by the route prefix ───────────────────────────────────────
  *   /auth/none/*                 no credential
  *   /auth/apikey-header/*        X-API-Key: <API_KEY>
@@ -420,6 +427,20 @@ export function createApp(options = {}) {
     return outage(url, downFrom, downUntil - now);
   }
 
+  /**
+   * The flat customer list while the clock is before `emptyAfter` (unix seconds), and 200 with no
+   * records after it: an ERP that still answers but has nothing in the list. A connection is set up
+   * and approved while it has rows, and its View page and the documents processed later meet an
+   * empty source. A moment already past (0 will do) is a list that is empty from the start, behind
+   * any auth prefix.
+   */
+  function serveEmptyAfter(emptyAfter) {
+    const now = Math.floor(Date.now() / 1000);
+    const rows = now < emptyAfter ? CUSTOMERS : [];
+
+    return json(200, { data: rows, meta: { total: rows.length, empty_after: emptyAfter } });
+  }
+
   /** The answer of an ERP that is down: 503, or the status `?fail_status=` asks for. */
   function outage(url, downSince, retryAfter) {
     const outages = {
@@ -445,6 +466,9 @@ export function createApp(options = {}) {
 
     const between = /^\/customers\/down-between\/(\d{1,12})\/(\d{1,12})$/.exec(path);
     if (between !== null) return serveBetween(Number(between[1]), Number(between[2]), url);
+
+    const emptyAfter = /^\/customers\/empty-after\/(\d{1,12})$/.exec(path);
+    if (emptyAfter !== null) return serveEmptyAfter(Number(emptyAfter[1]));
 
     const version = CUSTOMER_VERSIONS[path];
     if (version !== undefined) {
