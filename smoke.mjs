@@ -241,6 +241,24 @@ await check('available-until: up before the moment, 503 after it, any auth prefi
   expect(wrongKey.status === 401, `wrong key still refused: ${wrongKey.status}`);
 });
 
+await check('empty-after: the list before the moment, zero records after it, any auth prefix', async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const before = await get(`/auth/apikey-header/customers/empty-after/${now + 3600}`, { headers: { 'x-api-key': KEY } });
+  const beforeBody = await before.json();
+  expect(before.status === 200 && beforeBody.data.length === 237 && beforeBody.meta.empty_after === now + 3600, `before: ${before.status}`);
+
+  const after = await get(`/auth/apikey-header/customers/empty-after/${now - 1}`, { headers: { 'x-api-key': KEY } });
+  const afterBody = await after.json();
+  expect(after.status === 200 && Array.isArray(afterBody.data) && afterBody.data.length === 0, `after: ${after.status}`);
+  expect(afterBody.meta.total === 0, `after: total ${afterBody.meta.total}`);
+
+  const always = await get('/auth/none/customers/empty-after/0');
+  expect(always.status === 200 && (await always.json()).data.length === 0, `empty from the start: ${always.status}`);
+
+  const wrongKey = await get(`/auth/apikey-header/customers/empty-after/${now - 1}`, { headers: { 'x-api-key': 'nope' } });
+  expect(wrongKey.status === 401, `wrong key still refused: ${wrongKey.status}`);
+});
+
 await check('down-between: up before the window, down inside it, back up after it', async () => {
   const now = Math.floor(Date.now() / 1000);
   const before = await get(`/auth/apikey-header/customers/down-between/${now + 600}/${now + 1200}`, { headers: { 'x-api-key': KEY } });
