@@ -13,6 +13,7 @@
  *   GET  /customers/nested       the array buried at $.payload.result.records
  *   GET  /catalogue              FIVE tables in one response, for choosing between arrays
  *   GET  /customers/many-pages   10 records per page, 5000 records -> blows the 20-page cap
+ *   GET  /customers/bulk         100,000 records, ?page=&page_size= up to 5000 -> exactly 20 pages, the cap
  *   GET  /prices                 a second catalogue, for a two-connection document test
  *   POST /customers/search       POST-for-query, body echoed into the filter
  *   GET  /customers/link-header  bare array, next page only in the Link header ?page=&per_page=
@@ -555,6 +556,19 @@ export function createApp(options = {}) {
           },
           meta: { tables: 5, note: 'synthetic' },
         });
+      }
+
+      case '/customers/bulk': {
+        // The largest list a connection can read: 100,000 records, the record cap, in 5,000-record
+        // pages, so all of it takes exactly the 20 pages the page cap allows. Built per page rather than
+        // held, so a Worker never keeps 100,000 objects in memory. A smaller page_size needs more pages.
+        const total = 100000;
+        const size = Math.max(1, Math.min(intParam(url, 'page_size', 5000), 5000));
+        const page = Math.max(1, intParam(url, 'page', 1));
+        const rows = [];
+        for (let i = (page - 1) * size; i < Math.min(page * size, total); i++) rows.push(customer(i + 1));
+
+        return json(200, { data: rows, meta: { page, page_size: size, total, total_pages: Math.ceil(total / size) } });
       }
 
       case '/customers/many-pages': {

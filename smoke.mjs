@@ -122,6 +122,19 @@ await check('pagination: cursor walks 237 and stops', async () => {
   expect(total === 237, `${total}`);
 });
 
+await check('bulk: 100,000 records over 20 pages of 5,000', async () => {
+  const first = await (await get('/auth/none/customers/bulk?page=1&page_size=5000')).json();
+  expect(first.data.length === 5000 && first.data[0].customer_code === 'C100001', 'page 1');
+  expect(first.meta.total === 100000 && first.meta.total_pages === 20, JSON.stringify(first.meta));
+  const last = await (await get('/auth/none/customers/bulk?page=20&page_size=5000')).json();
+  expect(last.data.length === 5000 && last.data[4999].customer_code === 'C200000', 'page 20');
+  const past = await (await get('/auth/none/customers/bulk?page=21&page_size=5000')).json();
+  expect(past.data.length === 0, 'past the end is empty');
+  const capped = await (await get('/auth/none/customers/bulk?page_size=9999')).json();
+  expect(capped.meta.page_size === 5000, 'page_size is capped at 5000');
+  return '20 x 5000';
+});
+
 await check('offset, flat, nested, catalogue, prices, many-pages', async () => {
   expect((await (await get('/auth/none/customers/offset?offset=200')).json()).data.length === 37, 'offset');
   expect((await (await get('/auth/none/customers/flat')).json()).data.length === 237, 'flat');
