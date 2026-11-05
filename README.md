@@ -67,6 +67,7 @@ Append a data route to an auth prefix, e.g. `/auth/apikey-header/customers`.
 | `/customers/nested` | records at `$.payload.result.records` |
 | `/catalogue` | five tables in one response |
 | `/customers/many-pages` | 5,000 records, 10 per page — exceeds the 20-page cap |
+| `/customers/bulk` | 100,000 records, `?page=&page_size=` up to 5,000 — the record cap in exactly the 20 pages the page cap allows |
 | `/prices` | a second catalogue (64 rows) |
 | `POST /customers/search` | JSON body `{"country":"NL"}` filters |
 | `/customers/link-header` | bare array, next page only in the `Link` header (`?page=&per_page=`) |
